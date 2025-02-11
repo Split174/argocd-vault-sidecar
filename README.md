@@ -1,238 +1,43 @@
-# argocd-vault-sidecar
+# argocd-vault-plugin working with SOPS and AGE
 
-ArgoCD sidecar suitable for running the [ArgoCD Vault Plugin](https://argocd-vault-plugin.readthedocs.io/en/stable/installation/#custom-image-and-configuration-via-sidecar)
+Original repository - https://github.com/eformat/argocd-vault-sidecar, thanks @eformat.
 
-## Example Usage
+The fork was created for two reasons:
 
-I am using the [GitOps Operator Helm Chart](https://github.com/redhat-cop/helm-charts/tree/master/charts/gitops-operator) from the RedHat COP.
+1. to use the native ghcr for github and actions, not quay.io
+2. because I use avp only in conjunction with kustomize. And I wanted to reduce the image size, but just in case I separately built the image with helm.
 
-```bash
-export TEAM_NAME=rainforest
-export SERVICE_ACCOUNT=vault
-export GIT_SERVER=gitlab-ce.apps.sno.sandbox1117.opentlc.com
-export IMAGE_TAG=$(cat VERSION)
+https://argocd-vault-plugin.readthedocs.io/en/stable/backends/#sops
 
-oc new-project ${TEAM_NAME}-ci-cd
-oc -n ${TEAM_NAME}-ci-cd create sa ${SERVICE_ACCOUNT}
-oc adm policy add-cluster-role-to-user edit -z ${SERVICE_ACCOUNT} -n ${TEAM_NAME}-ci-cd
-oc adm policy add-cluster-role-to-user system:auth-delegator -z ${SERVICE_ACCOUNT} -n ${TEAM_NAME}-ci-cd
+If you check this comment - https://github.com/argoproj-labs/argocd-vault-plugin/pull/265#issuecomment-1015577571
 
-cat << EOF > /tmp/argocd-values.yaml
-ignoreHelmHooks: true
-operator: []
-namespaces:
-  - ${TEAM_NAME}-ci-cd
-argocd_cr:
-  statusBadgeEnabled: true
-  repo:
-    mountsatoken: true
-    serviceaccount: ${SERVICE_ACCOUNT}
-    volumes:
-    - name: vault-plugin
-      configMap:
-        name: argocd-vault-plugins
-        items:
-        - key: vault-plugin.yaml
-          path: plugin.yaml
-          mode: 509
-    - name: vault-plugin-helm
-      configMap:
-        name: argocd-vault-plugins
-        items:
-        - key: helm-plugin.yaml
-          path: plugin.yaml
-          mode: 509
-    - name: vault-plugin-kustomize
-      configMap:
-        name: argocd-vault-plugins
-        items:
-        - key: kustomize-plugin.yaml
-          path: plugin.yaml
-          mode: 509
-    - configMap:
-        name: argocd-vault-plugins
-        items:
-        - key: sops-age-plugin.yaml
-          path: plugin.yaml
-          mode: 509
-      name: sops-age-plugin
-    - name: sops-age-key
-      secret:
-        defaultMode: 420
-        secretName: sops-age-key
-    - name: cmp-tmp-vault
-      emptyDir: {}
-    - name: cmp-tmp-helm
-      emptyDir: {}
-    - name: cmp-tmp-kustomize
-      emptyDir: {}
-    - name: cmp-tmp-sops-age
-      emptyDir: {}
-    initContainers:
-    - name: copy-cmp-server
-      command:
-      - cp
-      - -n
-      - /usr/local/bin/argocd
-      - /var/run/argocd/argocd-cmp-server
-      image: quay.io/argoproj/argocd:v${IMAGE_TAG}
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-          - ALL
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      terminationMessagePath: /dev/termination-log
-      terminationMessagePolicy: File
-      volumeMounts:
-      - mountPath: /var/run/argocd
-        name: var-files
-    sidecarContainers:
-    - name: vault-plugin
-      command: [/var/run/argocd/argocd-cmp-server]
-      image: quay.io/eformat/argocd-vault-sidecar:${IMAGE_TAG}
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-          - ALL
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      volumeMounts:
-        - mountPath: /var/run/argocd
-          name: var-files
-        - mountPath: /home/argocd/cmp-server/config
-          name: vault-plugin
-        - mountPath: /home/argocd/cmp-server/plugins
-          name: plugins
-        - mountPath: /tmp
-          name: cmp-tmp-vault
-    - name: vault-plugin-helm
-      command: [/var/run/argocd/argocd-cmp-server]
-      image: quay.io/eformat/argocd-vault-sidecar:${IMAGE_TAG}
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-          - ALL
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      volumeMounts:
-        - mountPath: /var/run/argocd
-          name: var-files
-        - mountPath: /home/argocd/cmp-server/config
-          name: vault-plugin-helm
-        - mountPath: /home/argocd/cmp-server/plugins
-          name: plugins
-        - mountPath: /tmp
-          name: cmp-tmp-helm
-    - name: vault-plugin-kustomize
-      command: [/var/run/argocd/argocd-cmp-server]
-      image: quay.io/eformat/argocd-vault-sidecar:${IMAGE_TAG}
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-          - ALL
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      volumeMounts:
-        - mountPath: /var/run/argocd
-          name: var-files
-        - mountPath: /home/argocd/cmp-server/config
-          name: vault-plugin-kustomize
-        - mountPath: /home/argocd/cmp-server/plugins
-          name: plugins
-        - mountPath: /tmp
-          name: cmp-tmp-kustomize
-    - command: [/var/run/argocd/argocd-cmp-server]
-      env:
-        - name: SOPS_AGE_KEY_FILE
-          value: /var/run/secrets/age-key.txt
-      image: quay.io/eformat/argocd-vault-sidecar:${IMAGE_TAG}
-      name: sops-age-plugin
-      resources: {}
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-          - ALL
-        readOnlyRootFilesystem: true
-        runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
-      volumeMounts:
-        - mountPath: /var/run/argocd
-          name: var-files
-        - mountPath: /home/argocd/cmp-server/config
-          name: sops-age-plugin
-        - mountPath: /home/argocd/cmp-server/plugins
-          name: plugins
-        - mountPath: /tmp
-          name: cmp-tmp-sops-age
-        - mountPath: /var/run/secrets
-          name: sops-age-key
-          readOnly: true
-  initialRepositories: |
-    - name: rainforest
-      url: https://${GIT_SERVER}/${TEAM_NAME}/data-mesh-pattern.git
-  repositoryCredentials: |
-    - url: https://${GIT_SERVER}
-      type: git
-      passwordSecret:
-        key: password
-        name: git-auth
-      usernameSecret:
-        key: username
-        name: git-auth
-EOF
+Has all the details you need to get it working.
 
-## plugins
-oc apply -n ${TEAM_NAME}-ci-cd -f- <<EOF
+See here for using `age` for AES encryption rather than pgp - https://github.com/getsops/sops?tab=readme-ov-file#22encrypting-using-age
+
+This is a great video if you are new to SOPS - https://www.youtube.com/watch?v=V2PRhxphH2w
+
+Do not call your encoded secret file "secret-test.enc.yaml" - as argocd will apply this file - rather just use "secret-test.enc"
+
+Secret containing age private key - this mounts `age-key.txt` into the repo sidecar pod.
+
+```yaml
 apiVersion: v1
-kind: ConfigMap
+stringData:
+  age-key.txt: |
+    # created: 2024-09-05T09:30:53+10:00
+    # public key: age1p8dtq658wa3tvkazx9686g770yvfq9yz0tv4hwmukyyvurppzuus5520ry
+    AGE-SECRET-KEY-XXX
+kind: Secret
 metadata:
-  name: argocd-vault-plugins
-data:
-  vault-plugin.yaml: |
-    apiVersion: argoproj.io/v1alpha1
-    kind: ConfigManagementPlugin
-    metadata:
-      name: argocd-vault-plugin
-    spec:
-      generate:
-        command: ["sh", "-c"]
-        args: ["argocd-vault-plugin -s ${TEAM_NAME}-ci-cd:team-avp-credentials generate ./"]
-  helm-plugin.yaml: |
-    apiVersion: argoproj.io/v1alpha1
-    kind: ConfigManagementPlugin
-    metadata:
-      name: argocd-vault-plugin-helm
-    spec:
-      init:
-        command: [sh, -c]
-        args: ["helm dependency build"]
-      generate:
-        command: ["bash", "-c"]
-        args: ['helm template "\$ARGOCD_APP_NAME" -n "\$ARGOCD_APP_NAMESPACE" -f <(echo "\$ARGOCD_ENV_HELM_VALUES") . | argocd-vault-plugin generate -s ${TEAM_NAME}-ci-cd:team-avp-credentials -']
-  kustomize-plugin.yaml: |
-    apiVersion: argoproj.io/v1alpha1
-    kind: ConfigManagementPlugin
-    metadata:
-      name: argocd-vault-plugin-kustomize
-    spec:
-      generate:
-        command: ["sh", "-c"]
-        args: ["kustomize build . | argocd-vault-plugin -s ${TEAM_NAME}-ci-cd:team-avp-credentials generate -"]
+  name: sops-age-key
+  namespace: openshift-gitops
+type: Opaque
+```
+
+ConfigMap as part of argocd bootstrap
+
+```yaml
   sops-age-plugin.yaml: |
     apiVersion: argoproj.io/v1alpha1
     kind: ConfigManagementPlugin
@@ -242,47 +47,38 @@ data:
       generate:
         command: ["sh", "-c"]
         args: ['AVP_TYPE=sops argocd-vault-plugin generate ./']
-EOF
-
-## sops and age
-oc apply -n ${TEAM_NAME}-ci-cd -f- <<EOF
-apiVersion: v1
-stringData:
-  age-key.txt: |
-    # public key: ageXXX
-    AGE-SECRET-KEY-XXX
-kind: Secret
-metadata:
-  name: sops-age-key
-  namespace: openshift-gitops
-type: Opaque
-EOF
-
-## deploy
-helm upgrade --install argocd \
-  --namespace ${TEAM_NAME}-ci-cd \
-  -f /tmp/argocd-values.yaml \
-  redhat-cop/gitops-operator
 ```
 
-### Signature
+ArgoCD CR snippet (you need a sidecar image with age and sops binaries in it like this one).
 
-The public key of [argocd-vault-sidecar image](https://quay.io/repository/eformat/argocd-vault-sidecar)
-
-[Cosign](https://github.com/sigstore/cosign) public key:
-
-```shell
------BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEakwO+HEdPrtGO0bfkSiFaOwRTGVJ
-rdH2gzTrs5DilXAnomraaA7Uv1ZoAyl5KQqsQ4suSr346aBm7Yrqxo4xYg==
------END PUBLIC KEY-----
-```
-
-The public key is also available online: <https://raw.githubusercontent.com/eformat/argocd-vault-sidecar/master/cosign.pub>
-
-To verify an image:
-
-```shell
-curl --progress-bar -o cosign.pub https://raw.githubusercontent.com/eformat/argocd-vault-sidecar/master/cosign.pub
-cosign verify --key cosign.pub quay.io/eformat/argocd-vault-sidecar:${VERSION}
+```yaml
+      - command:
+          - /var/run/argocd/argocd-cmp-server
+        env:
+          - name: SOPS_AGE_KEY_FILE
+            value: /var/run/secrets/age-key.txt
+        image: 'ghcr.io/split174/argocd-vault-sidecar-kustomize:v0.0.1'
+        name: sops-age-plugin
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+          - mountPath: /var/run/argocd
+            name: var-files
+          - mountPath: /home/argocd/cmp-server/config
+            name: sops-age-plugin
+          - mountPath: /home/argocd/cmp-server/plugins
+            name: plugins
+          - mountPath: /tmp
+            name: cmp-tmp-sops-age
+          - mountPath: /var/run/secrets
+            name: sops-age-key
+            readOnly: true
 ```
